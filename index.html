@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Endless Runner — Demo (Auth)</title>
+<style>
+  :root{
+    --bg:#6ec6ff;
+    --panel: rgba(255,255,255,0.95);
+    --accent:#ffb300;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;}
+  #gameWrap{height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(#87ceeb, #6ec6ff);overflow:hidden;position:relative;}
+  canvas{background:transparent;display:block;max-width:100%;height:100vh;}
+  .ui{
+    position:absolute;left:12px;top:12px;padding:10px;border-radius:10px;background:var(--panel);backdrop-filter: blur(4px);box-shadow:0 6px 18px rgba(0,0,0,0.15);
+  }
+  .ui h1{margin:0;font-size:18px}
+  .ui p{margin:6px 0 0 0;font-size:13px;color:#333}
+  .centerMsg{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;background:rgba(255,255,255,0.98);padding:18px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.15);min-width:320px;
+  }
+  .btn{display:inline-block;margin-top:12px;padding:8px 14px;border-radius:8px;background:var(--accent);color:#111;font-weight:600;text-decoration:none;cursor:pointer;border:none}
+  .smallHint{font-size:12px;color:#444;margin-top:6px}
+  footer{position:absolute;right:12px;bottom:12px;background:var(--panel);padding:8px;border-radius:8px;font-size:12px;display:flex;gap:8px;align-items:center}
+  /* mobile controls */
+  .touchControls{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:10px;align-items:center}
+  .touchBtn{width:68px;height:48px;border-radius:8px;background:rgba(255,255,255,0.9);display:flex;align-items:center;justify-content:center;font-weight:700;box-shadow:0 6px 14px rgba(0,0,0,0.15);user-select:none}
+  @media (min-width:900px){ .touchControls{display:none} }
+
+  /* auth form */
+  .formRow{margin:8px 0;text-align:left}
+  .formRow input{width:100%;padding:8px;border-radius:6px;border:1px solid #ddd}
+  .linkish{font-size:13px;color:#1976d2;cursor:pointer;margin-left:6px}
+  .smallMuted{font-size:12px;color:#666;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="gameWrap">
+  <canvas id="c"></canvas>
+
+  <div class="ui" id="hud">
+    <h1>Endless Runner</h1>
+    <p id="scoreLabel">Score: 0</p>
+    <p class="smallHint">Arrows / A D = move, Space / Tap = jump</p>
+  </div>
+
+  <!-- centralized modal will act as auth + play UI -->
+  <div id="center" class="centerMsg">
+    <h2 id="centerTitle">Welcome</h2>
+
+    <!-- auth area -->
+    <div id="authArea">
+      <!-- login form -->
+      <div id="loginForm">
+        <div class="formRow"><label>Username</label><input id="loginUser" placeholder="username"></div>
+        <div class="formRow"><label>Password</label><input id="loginPass" type="password" placeholder="password"></div>
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:8px">
+          <button id="doLogin" class="btn">Login</button>
+          <button id="showSignup" class="btn" style="background:#90caf9;color:#000">Signup</button>
+        </div>
+        <div class="smallMuted">Demo: signup stores credentials locally. Signup ke baad auto-login hota hai.</div>
+      </div>
+
+      <!-- signup form (hidden by default) -->
+      <div id="signupForm" style="display:none">
+        <div class="formRow"><label>New Username</label><input id="signupUser" placeholder="username"></div>
+        <div class="formRow"><label>New Password</label><input id="signupPass" type="password" placeholder="password"></div>
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:8px">
+          <button id="doSignup" class="btn">Signup & Login</button>
+          <button id="showLogin" class="btn" style="background:#eee;color:#000">Back</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- when logged in, show this -->
+    <div id="loggedInArea" style="display:none">
+      <div style="font-size:14px;color:#222" id="welcomeMsg">Hello</div>
+      <div style="margin-top:8px">
+        <button id="playBtn" class="btn">Play</button>
+        <button id="logoutBtn" class="btn" style="background:#ef9a9a;margin-left:8px">Logout</button>
+      </div>
+      <div class="smallMuted" style="margin-top:8px">Game will start automatically after login.</div>
+    </div>
+
+    <!-- for game over message -->
+    <div id="centerMsg" style="display:none;margin-top:10px"></div>
+
+  </div>
+
+  <div class="touchControls" id="touchCtrls">
+    <div class="touchBtn" id="leftBtn">◀</div>
+    <div class="touchBtn" id="jumpBtn">Jump</div>
+    <div class="touchBtn" id="rightBtn">▶</div>
+  </div>
+
+  <footer>
+    <span>Made with ❤️ — Demo</span>
+    <button id="debugLogout" style="margin-left:12px">Clear Session</button>
+  </footer>
+</div>
+
+<script>
+(() => {
+  // ---------- Canvas & layout (unchanged, mostly) ----------
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: true });
+
+  let W = canvas.width = innerWidth;
+  let H = canvas.height = innerHeight;
+  window.addEventListener('resize', () => { W = canvas.width = innerWidth; H = canvas.height = innerHeight; layout(); });
+
+  // Game state
+  let running = false;
+  let gameOver = false;
+  let score = 0;
+  let speed = 6;
+  let spawnTimer = 0;
+  let spawnInterval = 80;
+  let difficultyTimer = 0;
+
+  // Lanes (3 lanes)
+  let lanes = 3;
+  let lanePositions = [];
+
+  // Player
+  const player = { lane:1, x:0, y:0, w:64, h:90, targetX:0, vy:0, jumping:false, jumpVel:-16, gravity:0.9, baseY:0 };
+
+  // Objects
+  let objects = [];
+
+  function layout(){
+    const pad = Math.min(120, W*0.06);
+    const roadW = Math.min(620, W - pad*2);
+    const centerX = W/2;
+    lanePositions = [];
+    for(let i=0;i<lanes;i++){
+      const px = centerX - roadW/2 + roadW*(i/(lanes-1 || 1));
+      lanePositions.push(px);
+    }
+    player.baseY = H - 140;
+    player.y = player.baseY;
+    player.x = lanePositions[player.lane];
+    player.targetX = player.x;
+  }
+  layout();
+
+  // Controls
+  const keys = {};
+  addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if(!running && e.key===' '){ startGame(); }
+    if(gameOver && e.key==='r'){ restart(); }
+  });
+  addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+  // Touch controls
+  let touchStartX = null, touchStartY = null;
+  addEventListener('touchstart', e => {
+    if(e.touches && e.touches[0]){ touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY; }
+  }, {passive:true});
+  addEventListener('touchend', e => {
+    if(!touchStartX) return;
+    const dx = (e.changedTouches[0].clientX - touchStartX);
+    const dy = (e.changedTouches[0].clientY - touchStartY);
+    const absx = Math.abs(dx);
+    const absy = Math.abs(dy);
+    if(absx > 40 && absx > absy){ if(dx > 0) moveRight(); else moveLeft(); } else { doJump(); }
+    touchStartX = null;
+  });
+
+  // UI buttons link
+  document.getElementById('leftBtn').addEventListener('click', moveLeft);
+  document.getElementById('rightBtn').addEventListener('click', moveRight);
+  document.getElementById('jumpBtn').addEventListener('click', doJump);
+
+  // --------- Auth UI logic (localStorage demo) ----------
+  const loginForm = document.getElementById('loginForm');
+  const signupForm = document.getElementById('signupForm');
+  const loggedInArea = document.getElementById('loggedInArea');
+  const centerTitle = document.getElementById('centerTitle');
+  const centerMsg = document.getElementById('centerMsg');
+
+  function showLoginUI(){ loginForm.style.display='block'; signupForm.style.display='none'; loggedInArea.style.display='none'; centerMsg.style.display='none'; centerTitle.textContent='Login'; }
+  function showSignupUI(){ loginForm.style.display='none'; signupForm.style.display='block'; loggedInArea.style.display='none'; centerMsg.style.display='none'; centerTitle.textContent='Signup'; }
+  function showLoggedInUI(username){ loginForm.style.display='none'; signupForm.style.display='none'; loggedInArea.style.display='block'; centerMsg.style.display='none'; centerTitle.textContent='Welcome'; document.getElementById('welcomeMsg').textContent = 'Hello, ' + username; }
+
+  document.getElementById('showSignup').addEventListener('click', showSignupUI);
+  document.getElementById('showLogin').addEventListener('click', showLoginUI);
+
+  // perform signup: store in localStorage.users as JSON {user:pass}
+  document.getElementById('doSignup').addEventListener('click', () => {
+    const user = document.getElementById('signupUser').value.trim();
+    const pass = document.getElementById('signupPass').value;
+    if(!user || !pass){ alert('username aur password bharain'); return; }
+    const users = JSON.parse(localStorage.getItem('demo_users')||'{}');
+    if(users[user]){ alert('username pehle se maujood hai'); return; }
+    users[user] = pass; // demo only
+    localStorage.setItem('demo_users', JSON.stringify(users));
+    // auto-login after signup:
+    localStorage.setItem('sessionUser', user);
+    showLoggedInUI(user);
+    // start game automatically
+    setTimeout(()=> startGame(), 200);
+  });
+
+  // perform login
+  document.getElementById('doLogin').addEventListener('click', () => {
+    const user = document.getElementById('loginUser').value.trim();
+    const pass = document.getElementById('loginPass').value;
+    if(!user || !pass){ alert('username aur password bharain'); return; }
+    const users = JSON.parse(localStorage.getItem('demo_users')||'{}');
+    if(users[user] && users[user] === pass){
+      localStorage.setItem('sessionUser', user);
+      showLoggedInUI(user);
+      // auto-start
+      setTimeout(()=> startGame(), 200);
+    } else {
+      alert('invalid credentials');
+    }
+  });
+
+  // logout
+  document.getElementById('logoutBtn').addEventListener('click', () => {
+    localStorage.removeItem('sessionUser');
+    // stop game & show login
+    running = false;
+    gameOver = false;
+    // show login UI
+    setTimeout(()=> { document.getElementById('center').style.display='block'; showLoginUI(); }, 120);
+  });
+
+  // clear session button (footer)
+  document.getElementById('debugLogout').addEventListener('click', () => {
+    localStorage.removeItem('sessionUser');
+    localStorage.removeItem('demo_users');
+    alert('session and users cleared (demo)');
+    location.reload();
+  });
+
+  // if session exists -> auto login and start game
+  const sess = localStorage.getItem('sessionUser');
+  if(sess){
+    // show logged-in UI briefly then start
+    showLoggedInUI(sess);
+    setTimeout(()=> { startGame(); }, 300);
+  } else {
+    // show login by default
+    showLoginUI();
+  }
+
+  // Play button available when logged in
+  document.getElementById('playBtn').addEventListener('click', () => startGame());
+
+  // ---------- movement helpers (same) ----------
+  function moveLeft(){ if(player.lane > 0){ player.lane--; player.targetX = lanePositions[player.lane]; } }
+  function moveRight(){ if(player.lane < lanes-1){ player.lane++; player.targetX = lanePositions[player.lane]; } }
+  function doJump(){ if(!player.jumping){ player.vy = player.jumpVel; player.jumping = true; } }
+
+  // spawn objects
+  function spawnObject(){
+    const r = Math.random();
+    const type = r < 0.65 ? 'obstacle' : (r < 0.92 ? 'coin' : 'power');
+    const lane = Math.floor(Math.random()*lanes);
+    const size = type==='coin' ? 26 : (type==='obstacle' ? 64 : 40);
+    const obj = { type, lane, x: lanePositions[lane], y: -120, w: size, h: size, passed:false };
+    objects.push(obj);
+  }
+
+  // collision AABB
+  function collide(a,b){
+    return a.x - a.w/2 < b.x + b.w/2 &&
+           a.x + a.w/2 > b.x - b.w/2 &&
+           a.y - a.h < b.y &&
+           a.y > b.y - b.h;
+  }
+
+  // main loop
+  let last = 0;
+  function loop(ts){
+    if(!running) return;
+    requestAnimationFrame(loop);
+    if(!last) last = ts;
+    const dt = Math.min(32, ts - last);
+    last = ts;
+    update();
+    render();
+  }
+
+  function update(){
+    if(keys['arrowleft'] || keys['a']) moveLeft();
+    if(keys['arrowright'] || keys['d']) moveRight();
+    if(keys[' '] || keys['w'] || keys['arrowup']) { if(!player._spaceDown){ doJump(); player._spaceDown = true; } } else player._spaceDown = false;
+    player.x += (player.targetX - player.x) * 0.22;
+    if(player.jumping){ player.vy += player.gravity; player.y += player.vy; if(player.y >= player.baseY){ player.y = player.baseY; player.vy = 0; player.jumping = false; } }
+    spawnTimer++; if(spawnTimer >= spawnInterval){ spawnTimer = 0; spawnObject(); if(Math.random() < 0.2) spawnObject(); }
+    for(let i=objects.length-1;i>=0;i--){
+      const o = objects[i];
+      o.y += speed * (o.type==='coin' ? 0.92 : 1.0) + (score*0.004);
+      if(!o.passed && o.y > player.baseY + 50){ o.passed = true; if(o.type === 'obstacle'){ score += 1; } else if(o.type === 'coin'){ score += 5; } else if(o.type === 'power'){ score += 10; } }
+      const playerBox = {x: player.x, y: player.y, w: player.w, h: player.h};
+      const objBox = {x: o.x, y: o.y, w: o.w, h: o.h};
+      if(collide(playerBox, objBox)){
+        if(o.type === 'coin' || o.type === 'power'){ score += o.type === 'coin' ? 20 : 50; objects.splice(i,1); }
+        else if(o.type === 'obstacle'){ running = false; gameOver = true; showGameOver(); return; }
+      }
+      if(o.y > H + 200) objects.splice(i,1);
+    }
+    difficultyTimer++;
+    if(difficultyTimer % 600 === 0){ speed += 0.6; if(spawnInterval > 28) spawnInterval = Math.max(28, spawnInterval - 4); }
+    score += 0.02 * speed;
+    document.getElementById('scoreLabel').textContent = 'Score: ' + Math.floor(score);
+  }
+
+  function showGameOver(){
+    const center = document.getElementById('center');
+    center.style.display = 'block';
+    centerTitle.textContent = 'Game Over';
+    centerMsg.style.display = 'block';
+    centerMsg.textContent = 'Score: ' + Math.floor(score);
+    // also show logged in area so user can replay or logout
+    const sess = localStorage.getItem('sessionUser');
+    if(sess) showLoggedInUI(sess); else showLoginUI();
+  }
+
+  function render(){
+    ctx.clearRect(0,0,W,H);
+    drawBackground();
+    drawRoad();
+    for(let o of objects) drawObject(o);
+    drawPlayer();
+  }
+
+  // drawing helpers (same as original)
+  function drawBackground(){
+    for(let i=0;i<3;i++){
+      const cx = (i*200 + (Date.now()*0.02)%400) % (W+200) - 100;
+      const cy = 60 + i*30;
+      drawCloud(cx, cy, 1.0 - i*0.25);
+    }
+  }
+  function drawCloud(x,y,scale=1){
+    ctx.save(); ctx.globalAlpha = 0.85*scale; ctx.beginPath(); ctx.fillStyle = 'rgba(255,255,255,0.98)'; ctx.ellipse(x,y,60*scale,34*scale,0,0,Math.PI*2); ctx.ellipse(x+40*scale,y+6*scale,50*scale,28*scale,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+  }
+  function drawRoad(){
+    const roadTop = H - 220;
+    ctx.fillStyle = '#214a22'; ctx.fillRect(0,roadTop+110,W,110);
+    for(let i=0;i<lanes;i++){
+      const x = lanePositions[i];
+      ctx.beginPath(); ctx.setLineDash([18,14]); ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.moveTo(x, -200); ctx.lineTo(x, roadTop+120); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.fillStyle = 'rgba(40,40,40,0.05)'; ctx.fillRect(0,roadTop+120,W, H - (roadTop+120));
+  }
+  function drawObject(o){
+    const screenX = o.x; const screenY = (o.y);
+    ctx.save(); ctx.translate(screenX, screenY);
+    if(o.type === 'coin'){ ctx.beginPath(); ctx.fillStyle = '#ffd54f'; ctx.ellipse(0,0,o.w/2,o.h/2,0,0,Math.PI*2); ctx.fill(); ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.fillRect(-o.w*0.12, -o.h*0.25, o.w*0.28, o.h*0.12); }
+    else if(o.type === 'power'){ ctx.beginPath(); ctx.fillStyle = '#7c4dff'; ctx.roundRect(-o.w/2,-o.h/2,o.w,o.h,8); ctx.fill(); ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.font = 'bold 18px Inter'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('P',0,0); }
+    else { ctx.beginPath(); ctx.fillStyle = '#8d6e63'; ctx.roundRect(-o.w/2,-o.h/2,o.w,o.h,6); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-o.w/2, -o.h/4, o.w, o.h/8); }
+    ctx.restore();
+  }
+  function drawPlayer(){
+    ctx.save();
+    const px = player.x; const py = player.y - player.h/2;
+    ctx.beginPath(); ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.ellipse(px, player.baseY + 42, player.w*0.6, 16, 0, 0, Math.PI*2); ctx.fill();
+    ctx.translate(px, py);
+    ctx.beginPath(); ctx.fillStyle = '#ff7043'; ctx.roundRect(-player.w/2, -player.h*0.2, player.w, player.h*0.6, 10); ctx.fill();
+    ctx.beginPath(); ctx.fillStyle = '#ffd7c2'; ctx.ellipse(0, -player.h*0.28, player.w*0.36, player.w*0.36, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle='#222'; ctx.fillRect(-10, -player.h*0.32, 6, 6); ctx.fillRect(6, -player.h*0.32, 6, 6);
+    ctx.restore();
+  }
+
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r){
+    if(w < 2*r) r = w/2; if(h < 2*r) r = h/2; this.beginPath(); this.moveTo(x+r, y); this.arcTo(x+w, y,   x+w, y+h, r); this.arcTo(x+w, y+h, x,   y+h, r); this.arcTo(x,   y+h, x,   y,   r); this.arcTo(x,   y,   x+w, y,   r); this.closePath(); return this;
+  };
+
+  // idle visuals when not running
+  function idleRender(){
+    if(!running){
+      ctx.clearRect(0,0,W,H);
+      drawBackground();
+      drawRoad();
+      drawPlayer();
+    }
+    requestAnimationFrame(idleRender);
+  }
+  idleRender();
+
+  // start & restart
+  function startGame(){
+    // ensure user is logged in
+    const sess = localStorage.getItem('sessionUser');
+    if(!sess){
+      alert('Pehle login karein');
+      return;
+    }
+    document.getElementById('center').style.display = 'none';
+    running = true; gameOver = false; score = 0; speed = 6; spawnTimer = 0; difficultyTimer = 0; objects = []; player.lane = 1; player.vy = 0; player.jumping = false;
+    layout();
+    last = 0;
+    loop();
+  }
+
+  function restart(){
+    document.getElementById('center').style.display = 'block';
+    document.getElementById('centerTitle').textContent = 'Game Over';
+    running = false; gameOver = false;
+  }
+
+})();
+</script>
+</body>
+</html>
